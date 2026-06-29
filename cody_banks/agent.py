@@ -10,16 +10,22 @@ from pathlib import Path
 import re
 from typing import Callable
 
-from cody_banks.config import Config
+from cody_banks.config import Config, ModelConfig, PermissionsConfig
 from cody_banks.llm import LLMClient, LLMError, Message
 from cody_banks.permissions import evaluate_shell_command
 from cody_banks.session import SessionRecorder
 from cody_banks.tools.files import (
     ToolError,
+    apply_patch_text,
+    create_file,
+    delete_file,
+    display_path,
     edit_file,
     list_files,
     read_file,
+    rename_file,
     resolve_workspace_path,
+    touched_paths_from_patch,
     write_file,
 )
 from cody_banks.tools.git import GitState, format_git_state, inspect_git_state, suggest_commit_message
@@ -50,6 +56,7 @@ class Agent:
     history: list[Message] = field(default_factory=list)
     always_allowed_shell_commands: set[str] = field(default_factory=set)
     always_allowed_file_actions: set[str] = field(default_factory=set)
+    approved_test_commands: set[str] = field(default_factory=set)
     max_tool_turns: int = 8
     session: SessionRecorder | None = None
     turn_start_git_state: GitState | None = None
@@ -71,6 +78,10 @@ class Agent:
                 self.output_func("")
                 return
 
+            if user_text.strip().startswith("/"):
+                if self._handle_slash_command(user_text.strip()):
+                    return
+                continue
             if user_text.strip() in {"/exit", "/quit"}:
                 return
             if not user_text.strip():
@@ -84,6 +95,125 @@ class Agent:
 
             self.output_func("")
             self.output_func(answer)
+
+    def _handle_slash_command(self, command: str) -> bool:
+        name, _, rest = command.partition(" ")
+        args = rest.strip()
+        self._record_session_event("slash_command", {"command": command})
+
+        if name in {"/exit", "/quit"}:
+            return True
+        if name == "/help":
+            self._show_help()
+            return False
+        if name == "/status":
+            self._show_status()
+            return False
+        if name == "/model":
+            self._handle_model_command(args)
+            return False
+        if name == "/permissions":
+            self._handle_permissions_command(args)
+            return False
+        if name == "/compact":
+            self._compact_session_to_memory()
+            return False
+        if name == "/clear":
+            self.history.clear()
+            self.output_func("Cleared chat context. Session log kept.")
+            return False
+
+        self.output_func(f"Unknown command: {name}")
+        self.output_func("Run /help to see available commands.")
+        return False
+
+    def _show_help(self) -> None:
+        self.output_func(
+            "\n".join(
+                [
+                    "Commands:",
+                    "/help          show commands",
+                    "/status        show workspace, model, git state, permission mode",
+                    "/model         show model config",
+                    "/model key value  change model config for this session",
+                    "/permissions   show permission mode",
+                    "/permissions ask|read-only|auto  change permission mode for this session",
+                    "/compact       summarize current session into .cody/memory.md",
+                    "/clear         clear current chat context, keep session log",
+                    "/exit          quit",
+                ]
+            )
+        )
+
+    def _show_status(self) -> None:
+        self.output_func("Workspace:")
+        self.output_func(str(self.workspace_root))
+        self.output_func("")
+        self.output_func("Model:")
+        self.output_func(format_model_config(self.config.model))
+        self.output_func("")
+        self.output_func(f"Permission mode: {self.config.permissions.mode}")
+        self.output_func("")
+        self.output_func(format_git_state(inspect_git_state(self.workspace_root)))
+
+    def _handle_model_command(self, args: str) -> None:
+        if not args:
+            self.output_func(format_model_config(self.config.model))
+            return
+
+        key, _, value = args.partition(" ")
+        key = key.strip()
+        value = value.strip()
+        if key not in {"base_url", "api_key", "model", "temperature", "max_tokens"} or not value:
+            self.output_func("Usage: /model [base_url|api_key|model|temperature|max_tokens] VALUE")
+            return
+
+        current = self.config.model
+        try:
+            if key == "temperature":
+                parsed_value: str | float | int = float(value)
+            elif key == "max_tokens":
+                parsed_value = int(value)
+            else:
+                parsed_value = value
+        except ValueError:
+            self.output_func(f"Invalid value for {key}: {value}")
+            return
+
+        model_config = ModelConfig(
+            base_url=parsed_value if key == "base_url" else current.base_url,
+            api_key=parsed_value if key == "api_key" else current.api_key,
+            model=parsed_value if key == "model" else current.model,
+            temperature=parsed_value if key == "temperature" else current.temperature,
+            max_tokens=parsed_value if key == "max_tokens" else current.max_tokens,
+        )
+        self.config = Config(model=model_config, permissions=self.config.permissions)
+        self.client = LLMClient(model_config)
+        self.output_func("Updated model config for this session.")
+        self.output_func(format_model_config(self.config.model))
+
+    def _handle_permissions_command(self, args: str) -> None:
+        if not args:
+            self.output_func(f"Permission mode: {self.config.permissions.mode}")
+            return
+        if args not in {"ask", "read-only", "auto"}:
+            self.output_func("Usage: /permissions ask|read-only|auto")
+            return
+        self.config = Config(
+            model=self.config.model,
+            permissions=PermissionsConfig(mode=args),
+        )
+        self.output_func(f"Permission mode: {self.config.permissions.mode}")
+
+    def _compact_session_to_memory(self) -> None:
+        memory_dir = self.workspace_root / ".cody"
+        memory_dir.mkdir(parents=True, exist_ok=True)
+        memory_path = memory_dir / "memory.md"
+        summary = summarize_history_for_memory(self.history)
+        timestamp = datetime.now(timezone.utc).isoformat()
+        with memory_path.open("a", encoding="utf-8") as memory_file:
+            memory_file.write(f"\n## Session compact {timestamp}\n\n{summary}\n")
+        self.output_func(f"Wrote session summary to {memory_path.relative_to(self.workspace_root)}")
 
     def run_turn(self, user_text: str) -> str:
         """Run one user turn until the model returns a final answer."""
@@ -174,6 +304,22 @@ class Agent:
                 self._log_tool_result(request.tool, request.args, permission.requested, True, result)
                 return result
 
+            if request.tool == "create_file":
+                path = _required_string(request, "path")
+                content = _required_string(request, "content")
+                action_key = f"create_file:{path}"
+                self._show_create_file_diff(path, content)
+                details = f"create_file {path}\ncontent:\n{content}"
+                permission = self._confirm_file_write(action_key, "create_file", path, details)
+                if not permission.granted:
+                    result = "Tool request denied by user."
+                    self._log_tool_result(request.tool, request.args, permission.requested, False, result)
+                    return result
+                result = create_file(path, content, self.workspace_root)
+                self.changed_files.add(str(resolve_workspace_path(self.workspace_root, path).relative_to(self.workspace_root)))
+                self._log_tool_result(request.tool, request.args, permission.requested, True, result)
+                return result
+
             if request.tool == "edit_file":
                 path = _required_string(request, "path")
                 old = _required_string(request, "old")
@@ -189,6 +335,77 @@ class Agent:
                     return result
                 result = edit_file(path, old, new, self.workspace_root)
                 self.changed_files.add(str(resolve_workspace_path(self.workspace_root, path).relative_to(self.workspace_root)))
+                self._log_tool_result(request.tool, request.args, permission.requested, True, result)
+                return result
+
+            if request.tool == "apply_patch":
+                patch_text = _required_string(request, "patch_text")
+                touched_paths = touched_paths_from_patch(patch_text, self.workspace_root)
+                if not touched_paths:
+                    raise ToolError("patch did not contain any workspace file paths")
+                for path in touched_paths:
+                    self._warn_if_user_dirty_file(display_path(self.workspace_root, path))
+                self._show_diff(patch_text)
+                details = "apply_patch\n" + patch_text
+                permission = self._confirm_file_write(
+                    "apply_patch",
+                    "apply_patch",
+                    display_path(self.workspace_root, touched_paths[0]) if touched_paths else ".",
+                    details,
+                    force_prompt=True,
+                )
+                if not permission.granted:
+                    result = "Tool request denied by user."
+                    self._log_tool_result(request.tool, request.args, permission.requested, False, result)
+                    return result
+                result = apply_patch_text(patch_text, self.workspace_root)
+                for path in touched_paths:
+                    self.changed_files.add(display_path(self.workspace_root, path))
+                self._log_tool_result(request.tool, request.args, permission.requested, True, result)
+                return result
+
+            if request.tool == "rename_file":
+                old_path = _required_string(request, "old_path")
+                new_path = _required_string(request, "new_path")
+                self._warn_if_user_dirty_file(old_path)
+                details = f"rename_file {old_path} -> {new_path}"
+                permission = self._confirm_file_write(
+                    f"rename_file:{old_path}:{new_path}",
+                    "rename_file",
+                    old_path,
+                    details,
+                    force_prompt=True,
+                )
+                if not permission.granted:
+                    result = "Tool request denied by user."
+                    self._log_tool_result(request.tool, request.args, permission.requested, False, result)
+                    return result
+                result = rename_file(old_path, new_path, self.workspace_root)
+                self.changed_files.add(old_path)
+                self.changed_files.add(new_path)
+                self._log_tool_result(request.tool, request.args, permission.requested, True, result)
+                return result
+
+            if request.tool == "delete_file":
+                path = _required_string(request, "path")
+                self._show_delete_file_diff(path)
+                self._warn_if_user_dirty_file(path)
+                details = f"delete_file {path}"
+                permission = self._confirm_file_write(
+                    f"delete_file:{path}",
+                    "delete_file",
+                    path,
+                    details,
+                    force_prompt=True,
+                    allow_always=False,
+                    reason_override="delete_file removes a workspace file",
+                )
+                if not permission.granted:
+                    result = "Tool request denied by user."
+                    self._log_tool_result(request.tool, request.args, permission.requested, False, result)
+                    return result
+                result = delete_file(path, self.workspace_root)
+                self.changed_files.add(path)
                 self._log_tool_result(request.tool, request.args, permission.requested, True, result)
                 return result
 
@@ -259,7 +476,7 @@ class Agent:
                         return result
                     decision.requires_prompt = False
 
-                if decision.requires_prompt:
+                if decision.requires_prompt and not is_test_command(cmd):
                     permission_requested = True
                     if not self._ask_permission(
                         title="Permission required for shell command:",
@@ -272,6 +489,14 @@ class Agent:
                         result = "Tool request denied by user."
                         self._log_tool_result(request.tool, request.args, True, False, result)
                         return result
+
+                test_permission = self._confirm_test_command(cmd)
+                if not test_permission.granted:
+                    result = "Tool request denied by user."
+                    self._log_tool_result(request.tool, request.args, test_permission.requested, False, result)
+                    return result
+                if test_permission.requested:
+                    permission_requested = True
 
                 result = run_shell(cmd, self.workspace_root)
                 self._track_shell_validation(cmd, result)
@@ -286,19 +511,28 @@ class Agent:
         self._log_tool_result(request.tool, request.args, False, False, result)
         return result
 
-    def _confirm_file_write(self, action_key: str, tool_name: str, path: str, details: str) -> PermissionResult:
+    def _confirm_file_write(
+        self,
+        action_key: str,
+        tool_name: str,
+        path: str,
+        details: str,
+        force_prompt: bool = False,
+        allow_always: bool = True,
+        reason_override: str | None = None,
+    ) -> PermissionResult:
         if self.config.permissions.mode == "read-only":
             raise ToolError("permission mode is read-only")
         dirty_at_turn_start = self._file_dirty_at_turn_start(path)
-        if self.config.permissions.mode == "auto" and not dirty_at_turn_start:
+        if self.config.permissions.mode == "auto" and not dirty_at_turn_start and not force_prompt:
             resolve_workspace_path(self.workspace_root, path)
             return PermissionResult(requested=False, granted=True)
-        if action_key in self.always_allowed_file_actions and not dirty_at_turn_start:
+        if action_key in self.always_allowed_file_actions and not dirty_at_turn_start and not force_prompt:
             return PermissionResult(requested=False, granted=True)
 
         resolved = resolve_workspace_path(self.workspace_root, path)
         resolved_details = details.replace(path, str(resolved.relative_to(self.workspace_root)), 1)
-        reason = "file write tools modify workspace files"
+        reason = reason_override or "file write tools modify workspace files"
         if dirty_at_turn_start:
             reason = "file had uncommitted changes before this turn"
         granted = self._ask_permission(
@@ -308,6 +542,7 @@ class Agent:
             tool_name=tool_name,
             target=str(resolved.relative_to(self.workspace_root)),
             always_callback=lambda: self.always_allowed_file_actions.add(action_key),
+            allow_always=allow_always,
         )
         return PermissionResult(requested=True, granted=granted)
 
@@ -340,6 +575,24 @@ class Agent:
                 self._record_permission_decision(tool_name, target, reason, granted=True, always=True)
                 return True
 
+    def _confirm_test_command(self, cmd: str) -> PermissionResult:
+        if not is_test_command(cmd):
+            return PermissionResult(requested=False, granted=True)
+        if cmd in self.approved_test_commands:
+            return PermissionResult(requested=False, granted=True)
+
+        granted = self._ask_permission(
+            title="Permission required for validation command:",
+            details=cmd,
+            reason="test/build/lint commands may take a while",
+            tool_name="shell",
+            target=cmd,
+            always_callback=lambda: self.approved_test_commands.add(cmd),
+        )
+        if granted:
+            self.approved_test_commands.add(cmd)
+        return PermissionResult(requested=True, granted=granted)
+
     def _show_write_file_diff(self, path: str, content: str) -> None:
         resolved = resolve_workspace_path(self.workspace_root, path)
         if resolved.exists() and not resolved.is_file():
@@ -352,6 +605,18 @@ class Agent:
             old_content,
             content,
             fromfile=f"a/{resolved.relative_to(self.workspace_root)}",
+            tofile=f"b/{resolved.relative_to(self.workspace_root)}",
+        )
+        self._show_diff(diff)
+
+    def _show_create_file_diff(self, path: str, content: str) -> None:
+        resolved = resolve_workspace_path(self.workspace_root, path)
+        if resolved.exists():
+            raise ToolError(f"file already exists: {path}")
+        diff = make_unified_diff(
+            "",
+            content,
+            fromfile="/dev/null",
             tofile=f"b/{resolved.relative_to(self.workspace_root)}",
         )
         self._show_diff(diff)
@@ -374,6 +639,19 @@ class Agent:
             updated,
             fromfile=f"a/{resolved.relative_to(self.workspace_root)}",
             tofile=f"b/{resolved.relative_to(self.workspace_root)}",
+        )
+        self._show_diff(diff)
+
+    def _show_delete_file_diff(self, path: str) -> None:
+        resolved = resolve_workspace_path(self.workspace_root, path)
+        if not resolved.is_file():
+            raise ToolError(f"not a file: {path}")
+        old_content = resolved.read_text(encoding="utf-8")
+        diff = make_unified_diff(
+            old_content,
+            "",
+            fromfile=f"a/{resolved.relative_to(self.workspace_root)}",
+            tofile="/dev/null",
         )
         self._show_diff(diff)
 
@@ -494,9 +772,11 @@ class Agent:
         self.session.append(event_type, payload)
 
     def _track_shell_validation(self, cmd: str, result: ShellResult) -> None:
-        validation_commands = ("python -m compileall", "pytest", "python -m pytest", "npm test", "npm run", "pnpm")
-        if any(cmd.strip().startswith(prefix) for prefix in validation_commands):
-            self.validations.append(f"{cmd} -> exit {result.exit_code}")
+        if is_test_command(cmd):
+            summary = f"{cmd} -> exit {result.exit_code}"
+            if result.exit_code != 0:
+                summary += f"; {summarize_failure(result)}"
+            self.validations.append(summary)
 
 
 TOOL_INSTRUCTIONS = """Tool use:
@@ -515,7 +795,11 @@ TOOL_INSTRUCTIONS = """Tool use:
 Available tools in this phase:
 - read_file: read a UTF-8 file under the workspace root. Required args: path string.
 - write_file: create or replace a UTF-8 file under the workspace root. Required args: path string, content string. Requires permission.
+- create_file: create a new UTF-8 file under the workspace root and fail if it exists. Required args: path string, content string. Requires permission.
 - edit_file: replace exact text in a UTF-8 file under the workspace root. Required args: path string, old string, new string. Requires permission.
+- apply_patch: apply a unified diff patch under the workspace root. Required args: patch_text string. Requires permission. Prefer edit_file for simple exact replacements.
+- rename_file: rename a file under the workspace root. Required args: old_path string, new_path string. Requires permission.
+- delete_file: delete a file under the workspace root. Required args: path string. Requires strong permission.
 - list_files: list files under a workspace directory. Optional args: path string, defaults to ".".
 - search_text: search text under the workspace root. Required args: query string. Optional args: path string, defaults to ".".
 - index_project: build a local keyword index under .cody/index/. Requires permission.
@@ -557,7 +841,11 @@ def validate_tool_request(request: ToolRequest) -> str | None:
     tool_specs = {
         "read_file": {"required": {"path"}, "optional": set()},
         "write_file": {"required": {"path", "content"}, "optional": set()},
+        "create_file": {"required": {"path", "content"}, "optional": set()},
         "edit_file": {"required": {"path", "old", "new"}, "optional": set()},
+        "apply_patch": {"required": {"patch_text"}, "optional": set()},
+        "rename_file": {"required": {"old_path", "new_path"}, "optional": set()},
+        "delete_file": {"required": {"path"}, "optional": set()},
         "list_files": {"required": set(), "optional": {"path"}},
         "search_text": {"required": {"query"}, "optional": {"path"}},
         "index_project": {"required": set(), "optional": set()},
@@ -588,8 +876,10 @@ def validate_tool_request(request: ToolRequest) -> str | None:
             return "retrieve_context arg 'limit' must be a positive integer"
         if not isinstance(value, str):
             return f"{request.tool} arg {key!r} must be a string"
-        if key != "content" and not value.strip():
+        if key not in {"content", "patch_text"} and not value.strip():
             return f"{request.tool} arg {key!r} must not be empty"
+        if key == "patch_text" and not value.strip():
+            return "apply_patch arg 'patch_text' must not be empty"
 
     return None
 
@@ -600,12 +890,7 @@ def format_tool_result_for_model(request: ToolRequest, result: ShellResult | dic
     elif isinstance(result, dict):
         body = json.dumps(result, indent=2)
     else:
-        body = (
-            f"exit_code: {result.exit_code}\n"
-            f"elapsed_seconds: {result.elapsed_seconds:.3f}\n"
-            f"stdout:\n{result.stdout}\n"
-            f"stderr:\n{result.stderr}"
-        )
+        body = compact_shell_result(result)
 
     return (
         "Tool result for request:\n"
@@ -642,10 +927,16 @@ def summarize_tool_result(result: ShellResult | dict[str, object] | str) -> str:
 
     if "path" in result:
         details = [f"path={result['path']}"]
-        for key in ("created", "bytes_written", "replacements"):
+        for key in ("created", "deleted", "bytes_written", "bytes_deleted", "replacements"):
             if key in result:
                 details.append(f"{key}={result[key]}")
         return ", ".join(details)
+    if "old_path" in result and "new_path" in result:
+        return f"old_path={result['old_path']}, new_path={result['new_path']}, renamed={result.get('renamed', False)}"
+    if "paths" in result:
+        paths = result.get("paths")
+        count = len(paths) if isinstance(paths, list) else 0
+        return f"paths={count}, applied={result.get('applied', False)}"
     if "entries" in result:
         entries = result.get("entries")
         count = len(entries) if isinstance(entries, list) else 0
@@ -666,11 +957,108 @@ def serialize_tool_result(result: ShellResult | dict[str, object] | str) -> dict
         return {
             "cmd": result.cmd,
             "exit_code": result.exit_code,
-            "stdout": result.stdout,
-            "stderr": result.stderr,
+            "stdout": compact_text(result.stdout),
+            "stderr": compact_text(result.stderr),
             "elapsed_seconds": result.elapsed_seconds,
+            "failure_summary": summarize_failure(result) if result.exit_code != 0 else "",
         }
     return result
+
+
+def compact_shell_result(result: ShellResult) -> str:
+    failure = ""
+    if result.exit_code != 0:
+        failure = (
+            "\nfailure_summary:\n"
+            f"{summarize_failure(result)}\n"
+            "next_fix:\n"
+            "Inspect the failure above, update the relevant code or command, then rerun the validation command."
+        )
+    return (
+        f"exit_code: {result.exit_code}\n"
+        f"elapsed_seconds: {result.elapsed_seconds:.3f}\n"
+        f"stdout:\n{compact_text(result.stdout)}\n"
+        f"stderr:\n{compact_text(result.stderr)}"
+        f"{failure}"
+    )
+
+
+def compact_text(text: str, max_lines: int = 80, max_chars: int = 6000) -> str:
+    if not text:
+        return ""
+    original_lines = text.splitlines()
+    lines = original_lines
+    if len(lines) > max_lines:
+        head_count = max_lines // 2
+        tail_count = max_lines - head_count
+        lines = [
+            *lines[:head_count],
+            f"... omitted {len(original_lines) - max_lines} lines ...",
+            *lines[-tail_count:],
+        ]
+    compacted = "\n".join(lines)
+    if len(compacted) > max_chars:
+        omitted = len(compacted) - max_chars
+        compacted = compacted[: max_chars // 2] + f"\n... omitted {omitted} chars ...\n" + compacted[-max_chars // 2 :]
+    return compacted
+
+
+def summarize_failure(result: ShellResult, max_lines: int = 12) -> str:
+    combined = "\n".join(part for part in (result.stderr, result.stdout) if part)
+    if not combined.strip():
+        return f"Command failed with exit code {result.exit_code}."
+
+    interesting: list[str] = []
+    patterns = ("error", "failed", "failure", "traceback", "exception", "assert", "not found")
+    for line in combined.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if any(pattern in stripped.lower() for pattern in patterns):
+            interesting.append(stripped)
+        if len(interesting) >= max_lines:
+            break
+    if not interesting:
+        interesting = [line.strip() for line in combined.splitlines() if line.strip()][-max_lines:]
+    return "\n".join(interesting[:max_lines])
+
+
+def is_test_command(cmd: str) -> bool:
+    normalized = " ".join(cmd.strip().split())
+    test_prefixes = (
+        "pytest",
+        "python -m pytest",
+        "uv run pytest",
+        "npm test",
+        "npm run build",
+        "ruff check",
+        "mypy",
+    )
+    return any(normalized == prefix or normalized.startswith(prefix + " ") for prefix in test_prefixes)
+
+
+def format_model_config(config: ModelConfig) -> str:
+    return "\n".join(
+        [
+            f"base_url: {config.base_url}",
+            f"api_key: {_redact_api_key(config.api_key)}",
+            f"model: {config.model}",
+            f"temperature: {config.temperature}",
+            f"max_tokens: {config.max_tokens}",
+        ]
+    )
+
+
+def summarize_history_for_memory(history: list[Message], limit: int = 12) -> str:
+    if not history:
+        return "- No chat context to compact."
+
+    lines: list[str] = []
+    for message in history[-limit:]:
+        role = message.get("role", "unknown")
+        content = compact_text(message.get("content", ""), max_lines=8, max_chars=800)
+        lines.append(f"- {role}: {content}")
+    return "\n".join(lines)
 
 
 def summarize_workspace(root: Path, limit: int = 40) -> str:
@@ -728,6 +1116,10 @@ def _tool_target(tool_name: str, args: dict[str, object]) -> str:
         value = args.get("cmd", "")
     elif tool_name == "search_text":
         value = args.get("path", ".")
+    elif tool_name == "rename_file":
+        value = f"{args.get('old_path', '')} -> {args.get('new_path', '')}"
+    elif tool_name == "apply_patch":
+        value = "patch"
     else:
         value = args.get("path", "")
     return str(value)
@@ -741,3 +1133,11 @@ def _truncate(text: str, limit: int = 240) -> str:
 
 def _normalize_diff_line(line: str) -> str:
     return line if line.endswith("\n") else line + "\n"
+
+
+def _redact_api_key(api_key: str) -> str:
+    if not api_key:
+        return ""
+    if len(api_key) <= 4:
+        return "****"
+    return api_key[:2] + "****" + api_key[-2:]

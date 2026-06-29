@@ -1,0 +1,181 @@
+{
+  "built_at": "2026-06-28T23:17:12.414364+00:00",
+  "document_count": 24,
+  "documents": [
+    {
+      "byte_count": 3086,
+      "kind": "readme",
+      "line_count": 90,
+      "path": "README.md",
+      "summary": "# Cody Banks\n## Current milestone\n[model]\n[permissions]"
+    },
+    {
+      "byte_count": 88,
+      "kind": "source",
+      "line_count": 6,
+      "path": "cody_banks/__init__.py",
+      "summary": "\"\"\"Cody Banks local coding agent.\"\"\"\n__all__ = [\"__version__\"]\n__version__ = \"0.1.0\""
+    },
+    {
+      "byte_count": 30658,
+      "kind": "source",
+      "line_count": 743,
+      "path": "cody_banks/agent.py",
+      "summary": "import difflib\nimport json\nimport re\nclass ToolRequest:\nclass PermissionResult:\nclass Agent:\ndef __post_init__(self) -> None:\ndef run_chat(self) -> None:\ndef run_turn(self, user_text: str) -> str:\ndef _build_messages(self) -> list[Message]:\ndef _system_message(self) -> str:\ndef _run_tool_request(self, request: ToolRequest) -> ShellResult | dict[str, object] | str:\ndef _confirm_file_write(self, action_key: str, tool_name: str, path: str, details: str) -> PermissionResult:\ndef _ask_permission(\ndef _show_write_file_diff(self, path: str, content: str) -> None:\ndef _show_edit_file_diff(self, path: str, old: str, new: str) -> None:\ndef _show_diff(self, diff: str) -> None:\ndef _warn_if_user_dirty_file(self, path: str) -> None:\ndef _file_dirty_at_turn_start(self, path: str) -> bool:\ndef _show_git_snapshot(self, title: str, state: GitState) -> None:\ndef _show_final_status(self) -> None:\ndef _log_tool_result(\ndef _record_permission_decision(\ndef _record_session_event(self, event_type: str, payload: dict[str, object]) -> None:"
+    },
+    {
+      "byte_count": 1871,
+      "kind": "source",
+      "line_count": 70,
+      "path": "cody_banks/cli.py",
+      "summary": "import argparse\ndef build_parser() -> argparse.ArgumentParser:\ndef main(argv: list[str] | None = None) -> int:"
+    },
+    {
+      "byte_count": 1445,
+      "kind": "source",
+      "line_count": 52,
+      "path": "cody_banks/config.py",
+      "summary": "import tomllib\nclass ModelConfig:\nclass PermissionsConfig:\nclass Config:\ndef load_config(path: Path | None = None) -> Config:"
+    },
+    {
+      "byte_count": 2787,
+      "kind": "source",
+      "line_count": 77,
+      "path": "cody_banks/llm.py",
+      "summary": "import json\nclass LLMError(RuntimeError):\nclass LLMClient:\ndef chat_completion(self, messages: list[Message]) -> str:\ndef create_chat_completion(self, messages: list[Message]) -> dict[str, Any]:\ndef _chat_completions_url(self) -> str:"
+    },
+    {
+      "byte_count": 8576,
+      "kind": "source",
+      "line_count": 268,
+      "path": "cody_banks/permissions.py",
+      "summary": "import shlex\nclass PermissionMode(StrEnum):\nclass PermissionDecision:\ndef evaluate_shell_command(cmd: str, mode: str, workspace_root: Path | None = None) -> PermissionDecision:\ndef _manual_block_reason(lowered: str) -> str | None:\ndef _prompt_reason(parts: list[str], workspace_root: Path | None) -> str | None:\ndef _package_install_reason(parts: list[str]) -> str | None:\ndef _looks_like_long_test(parts: list[str]) -> bool:\ndef _outside_workspace_path(tokens: list[str], workspace_root: Path | None) -> str | None:\ndef _destructive_outside_workspace_reason(parts: list[str], workspace_root: Path | None) -> str | None:\ndef _looks_like_assignment(token: str) -> bool:\ndef _looks_like_shell_write(token: str) -> bool:\ndef _auto_can_allow(parts: list[str], reason: str) -> bool:"
+    },
+    {
+      "byte_count": 1908,
+      "kind": "markdown",
+      "line_count": 31,
+      "path": "cody_banks/prompts/system.md",
+      "summary": "# Cody Banks System Prompt\n## Operating rules\n## Tool use\n## Skills"
+    },
+    {
+      "byte_count": 1196,
+      "kind": "source",
+      "line_count": 43,
+      "path": "cody_banks/session.py",
+      "summary": "import json\nclass SessionPaths:\ndef sessions_dir(self) -> Path:\ndef logs_dir(self) -> Path:\nclass SessionRecorder:\ndef create(cls, workspace_root: Path) -> \"SessionRecorder\":\ndef append(self, event_type: str, payload: dict[str, Any]) -> None:"
+    },
+    {
+      "byte_count": 255,
+      "kind": "readme",
+      "line_count": 12,
+      "path": "cody_banks/skills/README.md",
+      "summary": "# Skills"
+    },
+    {
+      "byte_count": 1152,
+      "kind": "skill",
+      "line_count": 36,
+      "path": "cody_banks/skills/git.md",
+      "summary": "# Git Skill\n## When to use it\n## Useful commands\n## Project conventions\n## Common traps\n## Done criteria"
+    },
+    {
+      "byte_count": 1264,
+      "kind": "skill",
+      "line_count": 34,
+      "path": "cody_banks/skills/local_llm.md",
+      "summary": "# Local LLM Skill\n## When to use it\n## Useful commands\n## Project conventions\n## Common traps\n## Done criteria"
+    },
+    {
+      "byte_count": 1177,
+      "kind": "skill",
+      "line_count": 37,
+      "path": "cody_banks/skills/python.md",
+      "summary": "# Python Skill\n## When to use it\n## Useful commands\n## Project conventions\n## Common traps\n## Done criteria"
+    },
+    {
+      "byte_count": 1169,
+      "kind": "skill",
+      "line_count": 37,
+      "path": "cody_banks/skills/react.md",
+      "summary": "# React Skill\n## When to use it\n## Useful commands\n## Project conventions\n## Common traps\n## Done criteria"
+    },
+    {
+      "byte_count": 44,
+      "kind": "source",
+      "line_count": 2,
+      "path": "cody_banks/tools/__init__.py",
+      "summary": "\"\"\"Tool implementations for Cody Banks.\"\"\""
+    },
+    {
+      "byte_count": 3373,
+      "kind": "source",
+      "line_count": 99,
+      "path": "cody_banks/tools/files.py",
+      "summary": "class ToolError(RuntimeError):\ndef resolve_workspace_path(workspace_root: Path, path: str) -> Path:\ndef display_path(workspace_root: Path, path: Path) -> str:\ndef read_file(path: str, workspace_root: Path) -> dict[str, object]:\ndef write_file(path: str, content: str, workspace_root: Path) -> dict[str, object]:\ndef edit_file(path: str, old: str, new: str, workspace_root: Path) -> dict[str, object]:\ndef list_files(path: str, workspace_root: Path, limit: int = 200) -> dict[str, object]:"
+    },
+    {
+      "byte_count": 2631,
+      "kind": "source",
+      "line_count": 89,
+      "path": "cody_banks/tools/git.py",
+      "summary": "import subprocess\nclass GitState:\ndef inspect_git_state(workspace_root: Path) -> GitState:\ndef format_git_state(state: GitState) -> str:\ndef suggest_commit_message(state: GitState) -> str | None:\ndef _git(workspace_root: Path, *args: str) -> \"_GitResult\":\nclass _GitResult:\ndef _status_path(line: str) -> str:"
+    },
+    {
+      "byte_count": 9840,
+      "kind": "source",
+      "line_count": 318,
+      "path": "cody_banks/tools/index.py",
+      "summary": "import json\nimport re\nclass IndexedDocument:\ndef build_project_index(workspace_root: Path) -> dict[str, object]:\ndef retrieve_context(query: str, workspace_root: Path, limit: int = 8) -> dict[str, object]:\ndef load_project_index(workspace_root: Path) -> dict[str, Any] | None:\ndef _iter_indexed_documents(workspace_root: Path) -> list[IndexedDocument]:\ndef _iter_indexable_files(workspace_root: Path) -> list[Path]:\ndef _is_indexable_file(path: Path, relative: Path) -> bool:\ndef _is_ignored(relative: Path) -> bool:\ndef _summarize_file(path: Path, workspace_root: Path) -> IndexedDocument:\ndef _summarize_sessions(workspace_root: Path) -> list[IndexedDocument]:\ndef _read_session_events(path: Path) -> list[dict[str, Any]]:\ndef _session_summary(events: list[dict[str, Any]]) -> str:\ndef _interesting_lines(lines: list[str], limit: int = 24) -> list[str]:\ndef _first_nonempty_lines(lines: list[str], limit: int = 8) -> str:\ndef _document_kind(path: Path, relative: Path) -> str:\ndef _rank_documents(query: str, documents: list[object]) -> list[dict[str, object]]:\ndef _document_to_record(document: IndexedDocument) -> dict[str, object]:\ndef _index_path(workspace_root: Path) -> Path:\ndef _single_line(text: str, limit: int = 180) -> str:"
+    },
+    {
+      "byte_count": 2852,
+      "kind": "source",
+      "line_count": 79,
+      "path": "cody_banks/tools/search.py",
+      "summary": "import subprocess\ndef search_text(query: str, path: str, workspace_root: Path, limit: int = 100) -> dict[str, object]:\ndef _search_with_rg(query: str, resolved: Path, workspace_root: Path, limit: int) -> dict[str, object]:\ndef _search_with_python(query: str, resolved: Path, workspace_root: Path, limit: int) -> dict[str, object]:"
+    },
+    {
+      "byte_count": 1977,
+      "kind": "source",
+      "line_count": 68,
+      "path": "cody_banks/tools/shell.py",
+      "summary": "import shlex\nimport subprocess\nimport time\nclass ShellResult:\ndef run_shell(cmd: str, workspace_root: Path, timeout_seconds: float = 120.0) -> ShellResult:\ndef cd_target_outside_workspace(cmd: str, workspace_root: Path) -> str | None:"
+    },
+    {
+      "byte_count": 272,
+      "kind": "source",
+      "line_count": 11,
+      "path": "cody_banks/workspace.py",
+      "summary": "def detect_workspace_root(path: Path | None = None) -> Path:"
+    },
+    {
+      "byte_count": 452,
+      "kind": "source",
+      "line_count": 22,
+      "path": "pyproject.toml",
+      "summary": "[build-system]\n[project]\n[project.scripts]\n[tool.setuptools.packages.find]\n[tool.setuptools.package-data]"
+    },
+    {
+      "byte_count": 21729,
+      "kind": "roadmap",
+      "line_count": 662,
+      "path": "roadmap.md",
+      "summary": "# Cody Banks Roadmap\n## Working assumptions\n## Phase 1 \u2014 Project skeleton\n## Phase 2 \u2014 Local model connection\n[model]\n## Phase 3 \u2014 The basic agent loop\n## Phase 4 \u2014 Workspace tools\n## Phase 5 \u2014 Permission system\n## Phase 6 \u2014 Diffs before writes\n## Phase 7 \u2014 Sessions and memory\n## Phase 8 \u2014 Runtime prompt and skills\n## Phase 9 \u2014 Git awareness\n## Phase 10 \u2014 Search and retrieval\n## Phase 11 \u2014 Better editing\n## Phase 12 \u2014 Tests and validation\n## Phase 13 \u2014 Slash commands\n## Phase 14 \u2014 Optional TUI\n## Milestone 1 \u2014 Minimum viable Cody\n## Milestone 2 \u2014 Useful local coding agent\n## Milestone 3 \u2014 Cody with RAG and skills\n## Suggested first Codex prompt\n## Design principle"
+    },
+    {
+      "byte_count": 2385,
+      "kind": "markdown",
+      "line_count": 45,
+      "path": "system_runtime.md",
+      "summary": "# System Runtime\n## Self\n## Morality\n## Authority\n## Responsibility\n## Base\n## Heading\n## Meaning\n## Art\n### Compression"
+    }
+  ],
+  "retrieval": {
+    "keyword": true,
+    "rule": "Use keyword search first; vector search is not implemented yet.",
+    "vector": false
+  },
+  "schema_version": 1,
+  "workspace_root": "/storage/cody_banks"
+}

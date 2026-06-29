@@ -278,6 +278,31 @@ After applying a change, log:
 - whether permission was granted
 - result summary
 
+
+Codex Result:
+```
+Completed Phase 6.
+Updated cody_banks/agent.py so write_file shows a unified diff before replacing an existing file and edit_file shows the exact unified patch before applying an edit. New file creation still prompts as before but does not show an old/new diff because there is no existing file to compare.
+
+Added JSONL tool logging to data/logs/tools.jsonl with:
+- timestamp
+- tool name
+- target path or command
+- whether permission was requested
+- whether permission was granted
+- result summary
+
+The logger records successful tools, denied permission requests, rejected tool requests, and tool failures. Existing permission behavior from Phase 5 is preserved, including read-only blocking and auto-mode workspace writes.
+
+Updated README.md with the Phase 6 diff and log behavior.
+Verified with:
+python -m compileall cody_banks
+write_file existing-file diff preview and log checks
+edit_file exact patch preview and log checks
+denied write permission log checks
+shell tool log checks
+```
+
 ## Phase 7 — Sessions and memory
 
 Persist each session locally.
@@ -306,6 +331,33 @@ Add a lightweight project memory file later, probably:
 ```
 
 This should contain stable project facts the agent has learned, not a giant transcript.
+
+
+Codex Result:
+```
+Completed Phase 7.
+Implemented local JSONL session persistence in cody_banks/session.py. Each Agent instance creates:
+data/sessions/YYYYMMDD-HHMMSS.jsonl
+
+Updated cody_banks/agent.py to record:
+- user_message
+- assistant_message
+- tool_request
+- permission_decision
+- tool_result
+- final_answer
+
+Tool result session events include the target, permission requested/granted fields, a short result summary, and the serialized tool result. The existing Phase 6 tool activity log remains in data/logs/tools.jsonl.
+
+Did not implement /resume or .cody/memory.md because the roadmap explicitly leaves those for later.
+
+Updated README.md with the session persistence behavior.
+Verified with:
+python -m compileall cody_banks
+final-answer session file and event checks
+tool-request/tool-result session checks
+permission-decision session checks
+```
 
 ## Phase 8 — Runtime prompt and skills
 
@@ -344,6 +396,33 @@ A skill should include:
 - common traps
 - done criteria
 
+
+Codex Result:
+```
+Completed Phase 8.
+Expanded cody_banks/prompts/system.md with runtime behavior for workspace operation, small inspectable changes, asking before risky commands, using tools instead of guessing, summarizing changes, and not inventing command results.
+
+Added starter markdown skills under cody_banks/skills/:
+- python.md
+- git.md
+- react.md
+- local_llm.md
+
+Each skill includes:
+- when to use it
+- useful commands
+- project conventions
+- common traps
+- done criteria
+
+Updated cody_banks/skills/README.md to document manual skill loading and updated README.md with the Phase 8 behavior.
+Verified with:
+python -m compileall cody_banks
+system prompt content checks
+skill structure checks
+printf '/exit\n' | python -m cody_banks.cli
+```
+
 ## Phase 9 — Git awareness
 
 Add git helpers after the basic loop works.
@@ -372,6 +451,25 @@ Not done:
 - anything skipped or uncertain
 ```
 
+
+Codex Result:
+```
+Completed Phase 9.
+Added read-only git helpers in cody_banks/tools/git.py to detect whether the workspace is a git repository, read the current branch, list dirty files, collect staged/unstaged diff summaries, format git state, and suggest a commit message.
+
+Updated cody_banks/agent.py to include git state in the model context, show git branch/dirty files/diff summary before and after each turn, warn before editing a file that had uncommitted changes at turn start, and require explicit approval for those dirty-file overwrites even in auto permission mode.
+
+The agent now prints a final Changed / Validated / Not done status after each turn. Shell validation commands such as compile/test commands are tracked when run through the shell tool. Commit message suggestions are printed when the repo is dirty, but no git mutation is performed.
+
+Updated cody_banks/prompts/system.md and README.md with git-awareness and final-status behavior.
+Verified with:
+python -m compileall cody_banks
+git helper checks for non-repo and repo workspaces
+agent git prompt checks
+dirty-file warning and auto-mode approval checks
+git before/after status output checks
+```
+
 ## Phase 10 — Search and retrieval
 
 Add local project indexing once the basic agent is useful.
@@ -396,6 +494,31 @@ Store index data under:
 ```
 
 The retrieval rule should be simple: use keyword search first, then vector search when keyword search is not enough.
+
+
+Codex Result:
+```
+Completed Phase 10.
+Added cody_banks/tools/index.py with local keyword-oriented project indexing stored at:
+.cody/index/project_index.json
+
+The index includes source files, README files, markdown docs, roadmap files, skill files, and summaries of data/sessions/*.jsonl. Each indexed document stores path, kind, line count, byte count, and a compact summary from headings/functions/imports or first meaningful lines.
+
+Added retrieval behavior that uses keyword search first through the existing search_text tool, then falls back to scored indexed summaries when keyword search has no matches. Vector search is explicitly marked as not implemented yet.
+
+Updated cody_banks/agent.py with two tools:
+- index_project()
+- retrieve_context(query, limit=8)
+
+index_project requires permission because it writes .cody/index/project_index.json. retrieve_context is read-only.
+
+Updated README.md and cody_banks/prompts/system.md with the keyword-first retrieval rule.
+Verified with:
+python -m compileall cody_banks
+index build and retrieval checks
+index tool validation checks
+agent index_project/retrieve_context checks
+```
 
 ## Phase 11 — Better editing
 

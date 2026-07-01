@@ -18,6 +18,10 @@ Phase 11 adds patch, create, rename, and delete editing tools.
 Phase 12 adds validation command approval, compact output, and failure summaries.
 Phase 13 adds terminal slash commands.
 Phase 14 documents the optional TUI plan and defers implementation.
+Phase 15 makes `.cody/memory.md` a first-class project memory file with explicit memory commands.
+Phase 16 adds Roadmap Mode for planning tasks into saved `.cody/roadmaps/` markdown files before execution.
+Phase 17 adds Execution Mode for following saved roadmaps step by step and updating checkbox progress.
+Phase 18 adds automatic markdown skill loading during roadmap creation and execution.
 
 ## Installation
 
@@ -111,15 +115,34 @@ Slash commands in the interactive loop:
 - `/status`
 - `/model`
 - `/permissions`
+- `/memory show`
+- `/memory add TEXT`
+- `/memory search QUERY`
+- `/memory prune`
+- `/roadmap`
+- `/roadmap latest`
+- `/roadmap new TASK`
+- `/execute latest`
+- `/execute PATH`
 - `/compact`
 - `/clear`
 - `/exit`
+
+Project memory lives at `.cody/memory.md`. Cody creates it automatically and reads it into task context as durable background knowledge. Use it for stable project facts, architectural decisions, coding conventions, user preferences, known risks, recurring warnings, and durable lessons learned. Do not use it for full transcripts, raw tool output, temporary task plans, or speculative notes.
+
+`/compact` no longer writes session transcripts into memory. It now reminds you to add only durable lessons with `/memory add TEXT`.
+
+Roadmaps live under `.cody/roadmaps/` with timestamped filenames like `YYYYMMDD-HHMM-task-name.md`. Use `/roadmap new TASK` to create a planning roadmap before making changes. Roadmap Mode can inspect files, search, retrieve context, inspect git state, run safe read-only inspection commands, and draft assumptions or clarifying questions, but it cannot edit project files or run mutating commands.
+
+Use `/execute latest` or `/execute PATH` to follow a saved roadmap. Execution Mode identifies the next unchecked step, executes only that step, marks it complete when successful, records execution notes in the roadmap, and pauses when assumptions break, validation fails, required files are missing, or the next action would be risky.
+
+During roadmap creation, Cody automatically loads relevant markdown skills from `cody_banks/skills/` using simple keyword and file-pattern matching. Roadmaps record loaded skills in a `# Loaded Skills` section, and Execution Mode reloads those named skills before working on roadmap steps.
 
 The optional TUI is intentionally deferred. Notes live in `cody_banks/tui.md`.
 
 Each agent session is written to `data/sessions/YYYYMMDD-HHMMSS.jsonl` with user messages, assistant messages, tool requests, permission decisions, tool results, and final answers.
 
-Reusable skills live in `cody_banks/skills/` and can be manually loaded into context when relevant.
+Reusable skills live in `cody_banks/skills/` and are loaded automatically for roadmap creation and execution when simple task matching identifies them.
 
 When the workspace is a git repository, Cody Banks shows branch, dirty files, and diff summaries before and after each turn. It warns before editing files that were already dirty at the start of the turn and suggests a commit message without committing.
 

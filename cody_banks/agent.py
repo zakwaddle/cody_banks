@@ -12,8 +12,32 @@ from typing import Callable
 
 from cody_banks.config import Config, ModelConfig, PermissionsConfig
 from cody_banks.llm import LLMClient, LLMError, Message
+from cody_banks.memory import (
+    add_memory_note,
+    ensure_memory_file,
+    prune_memory,
+    read_memory,
+    read_memory_for_prompt,
+    search_memory,
+)
 from cody_banks.permissions import evaluate_shell_command
+from cody_banks.roadmap import (
+    active_step,
+    append_execution_note,
+    ensure_roadmaps_dir,
+    ensure_loaded_skills_record,
+    latest_roadmap_path,
+    mark_step_complete,
+    resolve_roadmap_path,
+    save_roadmap,
+)
 from cody_banks.session import SessionRecorder
+from cody_banks.skill_loader import (
+    format_loaded_skills,
+    format_loaded_skills_record,
+    infer_and_load_skills,
+    load_skills_from_roadmap,
+)
 from cody_banks.tools.files import (
     ToolError,
     apply_patch_text,
@@ -66,6 +90,8 @@ class Agent:
     def __post_init__(self) -> None:
         if self.session is None:
             self.session = SessionRecorder.create(self.workspace_root)
+        ensure_memory_file(self.workspace_root)
+        ensure_roadmaps_dir(self.workspace_root)
 
     def run_chat(self) -> None:
         """Run an interactive terminal chat loop."""
@@ -115,6 +141,15 @@ class Agent:
         if name == "/permissions":
             self._handle_permissions_command(args)
             return False
+        if name == "/memory":
+            self._handle_memory_command(args)
+            return False
+        if name == "/roadmap":
+            self._handle_roadmap_command(args)
+            return False
+        if name == "/execute":
+            self._handle_execute_command(args)
+            return False
         if name == "/compact":
             self._compact_session_to_memory()
             return False
@@ -138,7 +173,16 @@ class Agent:
                     "/model key value  change model config for this session",
                     "/permissions   show permission mode",
                     "/permissions ask|read-only|auto  change permission mode for this session",
-                    "/compact       summarize current session into .cody/memory.md",
+                    "/memory show   show .cody/memory.md",
+                    "/memory add TEXT  add a durable memory note",
+                    "/memory search QUERY  search project memory",
+                    "/memory prune  remove duplicate and transcript-style memory entries",
+                    "/roadmap      show latest roadmap or usage",
+                    "/roadmap latest  show latest saved roadmap",
+                    "/roadmap new TASK  create a planning roadmap",
+                    "/execute latest  execute latest saved roadmap",
+                    "/execute PATH  execute a saved roadmap",
+                    "/compact       show guidance for durable memory updates",
                     "/clear         clear current chat context, keep session log",
                     "/exit          quit",
                 ]
@@ -205,15 +249,356 @@ class Agent:
         )
         self.output_func(f"Permission mode: {self.config.permissions.mode}")
 
+    def _handle_memory_command(self, args: str) -> None:
+        subcommand, _, rest = args.partition(" ")
+        subcommand = subcommand.strip()
+        rest = rest.strip()
+
+        if subcommand == "show":
+            self.output_func(read_memory(self.workspace_root))
+            return
+
+        if subcommand == "add":
+            if not rest:
+                self.output_func("Usage: /memory add TEXT")
+                self.output_func("Add only durable project context, not temporary task plans or transcripts.")
+                return
+            try:
+                path = add_memory_note(self.workspace_root, rest)
+            except ValueError as exc:
+                self.output_func(str(exc))
+                return
+            self.output_func(f"Added durable memory note to {path.relative_to(self.workspace_root)}")
+            return
+
+        if subcommand == "search":
+            if not rest:
+                self.output_func("Usage: /memory search QUERY")
+                return
+            try:
+                matches = search_memory(self.workspace_root, rest)
+            except ValueError as exc:
+                self.output_func(str(exc))
+                return
+            if not matches:
+                self.output_func("No memory matches.")
+                return
+            for match in matches:
+                self.output_func(f"{match.line_number}: {match.line}")
+            return
+
+        if subcommand == "prune":
+            result = prune_memory(self.workspace_root)
+            self.output_func(
+                "Pruned .cody/memory.md: "
+                f"removed {result['removed_duplicate_lines']} duplicate line(s), "
+                f"{result['removed_session_lines']} session transcript line(s)."
+            )
+            return
+
+        self.output_func("Usage: /memory show|add TEXT|search QUERY|prune")
+
+    def _handle_roadmap_command(self, args: str) -> None:
+        subcommand, _, rest = args.partition(" ")
+        subcommand = subcommand.strip()
+        rest = rest.strip()
+
+        if not subcommand:
+            self._show_latest_roadmap_or_usage()
+            return
+
+        if subcommand == "latest":
+            self._show_latest_roadmap_or_usage()
+            return
+
+        task = rest if subcommand == "new" else args
+        if not task.strip():
+            self.output_func("Usage: /roadmap new TASK")
+            return
+
+        try:
+            content = self._generate_roadmap(task.strip())
+        except LLMError as exc:
+            self.output_func(f"Model error: {exc}")
+            return
+
+        path = save_roadmap(self.workspace_root, task, content)
+        relative_path = path.relative_to(self.workspace_root)
+        self._record_session_event(
+            "roadmap_created",
+            {"path": str(relative_path), "task": task},
+        )
+        self.output_func(f"Saved roadmap to {relative_path}")
+        self.output_func("")
+        self.output_func(path.read_text(encoding="utf-8"))
+
+    def _show_latest_roadmap_or_usage(self) -> None:
+        path = latest_roadmap_path(self.workspace_root)
+        if path is None:
+            self.output_func("No roadmaps found.")
+            self.output_func("Usage: /roadmap new TASK")
+            return
+        self.output_func(f"Latest roadmap: {path.relative_to(self.workspace_root)}")
+        self.output_func("")
+        self.output_func(path.read_text(encoding="utf-8"))
+
+    def _generate_roadmap(self, task: str) -> str:
+        self._record_session_event("roadmap_requested", {"task": task})
+        skills = infer_and_load_skills(self.workspace_root, task)
+        self._record_session_event(
+            "roadmap_skills_loaded",
+            {"skills": [{"name": skill.name, "reason": skill.reason} for skill in skills]},
+        )
+        messages: list[Message] = [
+            {"role": "system", "content": self._roadmap_system_message(format_loaded_skills(skills))},
+            {
+                "role": "user",
+                "content": (
+                    "Create a roadmap for this task. Inspect the project first when useful, "
+                    "then return only the roadmap markdown. Record the loaded skills and reasons "
+                    "in a '# Loaded Skills' section.\n\n"
+                    f"Task: {task}"
+                ),
+            },
+        ]
+
+        for _ in range(self.max_tool_turns):
+            assistant_text = self.client.chat_completion(messages)
+            self._record_session_event("roadmap_assistant_message", {"content": assistant_text})
+            tool_request = parse_tool_request(assistant_text)
+            if tool_request is None:
+                return ensure_loaded_skills_record(
+                    extract_markdown_document(assistant_text),
+                    format_loaded_skills_record(skills),
+                )
+
+            messages.append({"role": "assistant", "content": assistant_text})
+            self._record_session_event(
+                "roadmap_tool_request",
+                {"tool": tool_request.tool, "args": tool_request.args},
+            )
+            result = self._run_roadmap_tool_request(tool_request)
+            messages.append(
+                {
+                    "role": "user",
+                    "content": format_tool_result_for_model(tool_request, result),
+                }
+            )
+
+        fallback = (
+            "# Goal\n\n"
+            f"{task}\n\n"
+            "# Background\n\n"
+            "Roadmap generation stopped because the model requested too many consecutive tool calls.\n\n"
+            "# Clarifying Questions\n\n"
+            "- None recorded.\n\n"
+            "# Assumptions\n\n"
+            "- The roadmap needs manual review before execution.\n\n"
+            "# Files Likely Involved\n\n"
+            "- Unknown.\n\n"
+            "# Steps\n\n"
+            "- [ ] Re-run roadmap creation with a more specific task.\n\n"
+            "# Validation Plan\n\n"
+            "- Not defined.\n\n"
+            "# Stop Conditions\n\n"
+            "- Stop before making code changes until the roadmap is completed.\n\n"
+            "# Memory Updates To Consider\n\n"
+            "- None yet.\n"
+        )
+        return ensure_loaded_skills_record(fallback, format_loaded_skills_record(skills))
+
+    def _roadmap_system_message(self, skill_context: str) -> str:
+        return "\n\n".join(
+            [
+                "You are Cody Banks in Roadmap Mode.",
+                "Project memory:\n" + read_memory_for_prompt(self.workspace_root),
+                "Loaded skills:\n" + skill_context,
+                "Workspace summary:\n" + summarize_workspace(self.workspace_root),
+                "Git summary:\n" + format_git_state(inspect_git_state(self.workspace_root)),
+                ROADMAP_MODE_INSTRUCTIONS,
+            ]
+        )
+
+    def _run_roadmap_tool_request(self, request: ToolRequest) -> ShellResult | dict[str, object] | str:
+        validation_error = validate_roadmap_tool_request(request)
+        if validation_error is not None:
+            return f"Roadmap tool request rejected: {validation_error}"
+
+        try:
+            if request.tool == "read_file":
+                return read_file(_required_string(request, "path"), self.workspace_root)
+            if request.tool == "list_files":
+                return list_files(_optional_string(request, "path", "."), self.workspace_root)
+            if request.tool == "search_text":
+                return search_text(
+                    _required_string(request, "query"),
+                    _optional_string(request, "path", "."),
+                    self.workspace_root,
+                )
+            if request.tool == "retrieve_context":
+                return retrieve_context(
+                    _required_string(request, "query"),
+                    self.workspace_root,
+                    limit=_optional_int(request, "limit", 8),
+                    build_if_missing=False,
+                )
+            if request.tool == "git_state":
+                return {"summary": format_git_state(inspect_git_state(self.workspace_root))}
+            if request.tool == "shell":
+                cmd = _required_string(request, "cmd")
+                decision = evaluate_shell_command(cmd, "read-only", self.workspace_root)
+                escaped_cd_target = cd_target_outside_workspace(cmd, self.workspace_root)
+                if escaped_cd_target is not None:
+                    return f"Roadmap tool request rejected: command changes directory outside the workspace: {escaped_cd_target}"
+                if decision.blocked or decision.requires_prompt:
+                    return f"Roadmap tool request rejected: shell command is not safe inspection: {decision.reason}"
+                return run_shell(cmd, self.workspace_root, timeout_seconds=30.0)
+        except ToolError as exc:
+            return f"Roadmap tool request failed: {exc}"
+
+        return f"Roadmap tool request rejected: unknown tool {request.tool!r}"
+
+    def _handle_execute_command(self, args: str) -> None:
+        target = args.strip()
+        if not target:
+            self.output_func("Usage: /execute latest|PATH")
+            return
+
+        if target == "latest":
+            path = latest_roadmap_path(self.workspace_root)
+            if path is None:
+                self.output_func("No roadmaps found.")
+                self.output_func("Usage: /execute latest|PATH")
+                return
+        else:
+            try:
+                path = resolve_roadmap_path(self.workspace_root, target)
+            except ValueError as exc:
+                self.output_func(str(exc))
+                return
+
+        self.changed_files.clear()
+        self.validations.clear()
+        self.turn_start_git_state = inspect_git_state(self.workspace_root)
+        self._show_git_snapshot("Git before work", self.turn_start_git_state)
+        self._record_session_event("execute_started", {"path": str(path.relative_to(self.workspace_root))})
+        self.output_func(f"Executing roadmap: {path.relative_to(self.workspace_root)}")
+
+        completed_steps = 0
+        for _ in range(20):
+            content = path.read_text(encoding="utf-8")
+            skills = load_skills_from_roadmap(self.workspace_root, content)
+            if skills:
+                self._record_session_event(
+                    "execute_skills_loaded",
+                    {"skills": [{"name": skill.name, "reason": skill.reason} for skill in skills]},
+                )
+            current_step = active_step(content)
+            if current_step is None:
+                self.output_func("No unchecked roadmap steps remain.")
+                break
+
+            line_index, step_text = current_step
+            self.output_func("")
+            self.output_func(f"Active step: {step_text}")
+            validation_start = len(self.validations)
+
+            try:
+                final_text = self._execute_roadmap_step(path, content, step_text, format_loaded_skills(skills))
+            except LLMError as exc:
+                note = f"Blocked at step '{step_text}': model error: {exc}"
+                path.write_text(append_execution_note(content, note), encoding="utf-8")
+                self.changed_files.add(str(path.relative_to(self.workspace_root)))
+                self.output_func(f"Model error: {exc}")
+                break
+
+            status = parse_execution_status(final_text)
+            failed_validation = self._latest_step_validation_failed(validation_start)
+            if status == "blocked" or failed_validation:
+                reason = summarize_execution_block(final_text, failed_validation)
+                updated = append_execution_note(content, f"Blocked at step '{step_text}': {reason}")
+                path.write_text(updated, encoding="utf-8")
+                self.changed_files.add(str(path.relative_to(self.workspace_root)))
+                self.output_func("Execution paused.")
+                self.output_func(reason)
+                break
+
+            updated = mark_step_complete(content, line_index)
+            updated = append_execution_note(updated, f"Completed step '{step_text}': {summarize_execution_completion(final_text)}")
+            path.write_text(updated, encoding="utf-8")
+            self.changed_files.add(str(path.relative_to(self.workspace_root)))
+            self._record_session_event(
+                "execute_step_completed",
+                {"path": str(path.relative_to(self.workspace_root)), "step": step_text},
+            )
+            completed_steps += 1
+        else:
+            self.output_func("Execution paused after 20 steps to avoid an unbounded run.")
+
+        self.output_func("")
+        self.output_func(f"Completed roadmap steps this run: {completed_steps}")
+        self._show_final_status()
+
+    def _execute_roadmap_step(self, path: Path, roadmap_content: str, step_text: str, skill_context: str) -> str:
+        messages: list[Message] = [
+            {"role": "system", "content": self._execute_system_message(path, roadmap_content, step_text, skill_context)},
+            {
+                "role": "user",
+                "content": (
+                    "Execute only the active roadmap step. Inspect before editing. "
+                    "Use the roadmap as the source of intent and do not re-plan from scratch."
+                ),
+            },
+        ]
+
+        for _ in range(self.max_tool_turns):
+            assistant_text = self.client.chat_completion(messages)
+            self._record_session_event("execute_assistant_message", {"content": assistant_text})
+            tool_request = parse_tool_request(assistant_text)
+            if tool_request is None:
+                return assistant_text
+
+            messages.append({"role": "assistant", "content": assistant_text})
+            self._record_session_event(
+                "execute_tool_request",
+                {"tool": tool_request.tool, "args": tool_request.args},
+            )
+            tool_result = self._run_tool_request(tool_request)
+            messages.append(
+                {
+                    "role": "user",
+                    "content": format_tool_result_for_model(tool_request, tool_result),
+                }
+            )
+
+        return "EXECUTION_STATUS: blocked\nReason: model requested too many consecutive tool calls."
+
+    def _execute_system_message(self, path: Path, roadmap_content: str, step_text: str, skill_context: str) -> str:
+        return "\n\n".join(
+            [
+                "You are Cody Banks in Execution Mode.",
+                "Project memory:\n" + read_memory_for_prompt(self.workspace_root),
+                "Loaded skills from roadmap:\n" + skill_context,
+                "Roadmap path:\n" + str(path.relative_to(self.workspace_root)),
+                "Roadmap content:\n" + roadmap_content,
+                "Active step:\n" + step_text,
+                "Workspace summary:\n" + summarize_workspace(self.workspace_root),
+                "Git summary:\n" + format_git_state(inspect_git_state(self.workspace_root)),
+                TOOL_INSTRUCTIONS,
+                EXECUTION_MODE_INSTRUCTIONS,
+            ]
+        )
+
+    def _latest_step_validation_failed(self, validation_start: int) -> bool:
+        step_validations = self.validations[validation_start:]
+        if not step_validations:
+            return False
+        return "-> exit 0" not in step_validations[-1]
+
     def _compact_session_to_memory(self) -> None:
-        memory_dir = self.workspace_root / ".cody"
-        memory_dir.mkdir(parents=True, exist_ok=True)
-        memory_path = memory_dir / "memory.md"
-        summary = summarize_history_for_memory(self.history)
-        timestamp = datetime.now(timezone.utc).isoformat()
-        with memory_path.open("a", encoding="utf-8") as memory_file:
-            memory_file.write(f"\n## Session compact {timestamp}\n\n{summary}\n")
-        self.output_func(f"Wrote session summary to {memory_path.relative_to(self.workspace_root)}")
+        ensure_memory_file(self.workspace_root)
+        self.output_func("Project memory now stores only durable context.")
+        self.output_func("Review the current task and add stable lessons with /memory add TEXT.")
 
     def run_turn(self, user_text: str) -> str:
         """Run one user turn until the model returns a final answer."""
@@ -267,6 +652,7 @@ class Agent:
         return "\n\n".join(
             [
                 base_prompt,
+                "Project memory:\n" + read_memory_for_prompt(self.workspace_root),
                 "Workspace summary:\n" + summarize_workspace(self.workspace_root),
                 "Git summary:\n" + format_git_state(inspect_git_state(self.workspace_root)),
                 TOOL_INSTRUCTIONS,
@@ -819,6 +1205,59 @@ Not done:
 - anything skipped or uncertain"""
 
 
+ROADMAP_MODE_INSTRUCTIONS = """Roadmap Mode rules:
+- You are creating an inspectable task roadmap, not executing the task.
+- You may inspect context with the allowed roadmap tools.
+- You may load relevant skills by reading markdown files under `cody_banks/skills/`.
+- You may ask clarifying questions inside the roadmap when uncertainty matters, but still produce a useful draft with explicit assumptions.
+- Do not request edits, file writes, patches, renames, deletes, index builds, package installs, tests, or mutating shell commands.
+- Return only the final roadmap markdown when ready.
+
+Allowed roadmap tools:
+- read_file: read a UTF-8 file under the workspace root. Required args: path string.
+- list_files: list files under a workspace directory. Optional args: path string, defaults to ".".
+- search_text: search text under the workspace root. Required args: query string. Optional args: path string, defaults to ".".
+- retrieve_context: retrieve relevant context without building a missing index. Required args: query string. Optional args: limit integer, defaults to 8.
+- git_state: inspect current git state. No args.
+- shell: run only safe inspection commands from the workspace root. Required args: cmd string.
+
+The roadmap must include these sections exactly:
+# Loaded Skills
+# Goal
+# Background
+# Clarifying Questions
+# Assumptions
+# Files Likely Involved
+# Steps
+# Validation Plan
+# Stop Conditions
+# Memory Updates To Consider
+
+Use checkboxes for implementation steps:
+- [ ] Step description"""
+
+
+EXECUTION_MODE_INSTRUCTIONS = """Execution Mode rules:
+- Follow the roadmap step by step. Execute only the active step provided in context.
+- Inspect relevant files before editing.
+- Make the smallest useful change for the active step.
+- Validate according to the roadmap when the active step requires validation.
+- Do not re-plan from scratch unless the roadmap is wrong or incomplete.
+- If the roadmap conflicts with observed files, a required file is missing, a larger design change is needed, validation fails in an uncovered way, or the next action is destructive or risky, stop and report blocked.
+- Do not mark roadmap checkboxes yourself. The executor updates roadmap progress after your final status.
+
+Final response format:
+EXECUTION_STATUS: completed
+Summary: what changed or what was confirmed
+Validation: commands or checks run, with observed results
+Deviations: none, or concise deviations from the roadmap
+
+If blocked:
+EXECUTION_STATUS: blocked
+Reason: concise reason execution must pause
+Observed: specific file, command, validation, or assumption that caused the block"""
+
+
 def parse_tool_request(text: str) -> ToolRequest | None:
     """Extract a tool request from assistant text, accepting fenced or raw JSON."""
     candidates = _json_candidates(text)
@@ -834,6 +1273,49 @@ def parse_tool_request(text: str) -> ToolRequest | None:
         if isinstance(tool, str) and isinstance(args, dict):
             return ToolRequest(tool=tool, args=args)
     return None
+
+
+def extract_markdown_document(text: str) -> str:
+    fenced = re.findall(r"```(?:markdown|md)?\s*(.*?)\s*```", text, flags=re.DOTALL | re.IGNORECASE)
+    if fenced:
+        for candidate in fenced:
+            if "# Goal" in candidate:
+                return candidate.strip()
+        return fenced[0].strip()
+    return text.strip()
+
+
+def parse_execution_status(text: str) -> str:
+    match = re.search(r"^\s*EXECUTION_STATUS:\s*(completed|blocked)\s*$", text, flags=re.IGNORECASE | re.MULTILINE)
+    if match is not None:
+        return match.group(1).lower()
+
+    lowered = text.lower()
+    if any(word in lowered for word in ("blocked", "cannot continue", "must pause", "stop condition")):
+        return "blocked"
+    return "completed"
+
+
+def summarize_execution_block(text: str, failed_validation: bool) -> str:
+    if failed_validation:
+        return "validation failed during this roadmap step"
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.lower().startswith(("reason:", "observed:", "deviations:")) and len(stripped) > 8:
+            return stripped
+    compacted = compact_text(text, max_lines=4, max_chars=500).strip()
+    return compacted or "execution reported a block"
+
+
+def summarize_execution_completion(text: str) -> str:
+    selected: list[str] = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.lower().startswith(("summary:", "validation:", "deviations:")):
+            selected.append(stripped)
+    if selected:
+        return " ".join(selected)
+    return compact_text(text, max_lines=4, max_chars=500).strip() or "completed"
 
 
 def validate_tool_request(request: ToolRequest) -> str | None:
@@ -880,6 +1362,43 @@ def validate_tool_request(request: ToolRequest) -> str | None:
             return f"{request.tool} arg {key!r} must not be empty"
         if key == "patch_text" and not value.strip():
             return "apply_patch arg 'patch_text' must not be empty"
+
+    return None
+
+
+def validate_roadmap_tool_request(request: ToolRequest) -> str | None:
+    tool_specs = {
+        "read_file": {"required": {"path"}, "optional": set()},
+        "list_files": {"required": set(), "optional": {"path"}},
+        "search_text": {"required": {"query"}, "optional": {"path"}},
+        "retrieve_context": {"required": {"query"}, "optional": {"limit"}},
+        "git_state": {"required": set(), "optional": set()},
+        "shell": {"required": {"cmd"}, "optional": set()},
+    }
+    spec = tool_specs.get(request.tool)
+    if spec is None:
+        return f"{request.tool!r} is not allowed in Roadmap Mode"
+
+    allowed = spec["required"] | spec["optional"]
+    unexpected = set(request.args) - allowed
+    if unexpected:
+        return f"unexpected {request.tool} args: {', '.join(sorted(unexpected))}"
+
+    missing = spec["required"] - set(request.args)
+    if missing:
+        return f"missing {request.tool} args: {', '.join(sorted(missing))}"
+
+    for key, value in request.args.items():
+        if request.tool == "retrieve_context" and key == "limit":
+            if isinstance(value, int) and value > 0:
+                continue
+            if isinstance(value, str) and value.isdigit() and int(value) > 0:
+                continue
+            return "retrieve_context arg 'limit' must be a positive integer"
+        if not isinstance(value, str):
+            return f"{request.tool} arg {key!r} must be a string"
+        if not value.strip():
+            return f"{request.tool} arg {key!r} must not be empty"
 
     return None
 
@@ -1047,18 +1566,6 @@ def format_model_config(config: ModelConfig) -> str:
             f"max_tokens: {config.max_tokens}",
         ]
     )
-
-
-def summarize_history_for_memory(history: list[Message], limit: int = 12) -> str:
-    if not history:
-        return "- No chat context to compact."
-
-    lines: list[str] = []
-    for message in history[-limit:]:
-        role = message.get("role", "unknown")
-        content = compact_text(message.get("content", ""), max_lines=8, max_chars=800)
-        lines.append(f"- {role}: {content}")
-    return "\n".join(lines)
 
 
 def summarize_workspace(root: Path, limit: int = 40) -> str:

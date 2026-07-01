@@ -87,7 +87,7 @@ def build_project_index(workspace_root: Path) -> dict[str, object]:
     }
 
 
-def retrieve_context(query: str, workspace_root: Path, limit: int = 8) -> dict[str, object]:
+def retrieve_context(query: str, workspace_root: Path, limit: int = 8, build_if_missing: bool = True) -> dict[str, object]:
     """Retrieve context with keyword search first, then indexed summaries."""
     if not query.strip():
         raise ToolError("query must not be empty")
@@ -104,9 +104,18 @@ def retrieve_context(query: str, workspace_root: Path, limit: int = 8) -> dict[s
         }
 
     index = load_project_index(workspace_root)
-    if index is None:
+    if index is None and build_if_missing:
         build_project_index(workspace_root)
         index = load_project_index(workspace_root)
+    if index is None:
+        return {
+            "query": query,
+            "strategy": "summary",
+            "matches": [],
+            "truncated": False,
+            "vector_search": "not implemented",
+            "note": "project index is not available; roadmap mode did not build it because planning is non-mutating",
+        }
 
     documents = [] if index is None else index.get("documents", [])
     if not isinstance(documents, list):

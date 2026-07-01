@@ -2,7 +2,7 @@
 
 Reusable Cody Banks skills live here as plain markdown files.
 
-Load skills manually when they are relevant to the task. Automatic skill retrieval can come later.
+Cody loads skills automatically during roadmap creation with simple keyword and file-pattern matching. Roadmaps record loaded skills in `# Loaded Skills`, and Execution Mode reloads the skills named there before working on steps.
 
 Available starter skills:
 

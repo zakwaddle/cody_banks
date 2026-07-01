@@ -8,6 +8,7 @@ from pathlib import Path
 from cody_banks.agent import Agent
 from cody_banks.config import load_config
 from cody_banks.llm import LLMClient, LLMError
+from cody_banks.memory import ensure_memory_file, read_memory_for_prompt
 from cody_banks.workspace import detect_workspace_root
 
 
@@ -44,12 +45,24 @@ def main(argv: list[str] | None = None) -> int:
     print(f"Workspace root: {workspace_root}")
     print(f"Model endpoint: {config.model.base_url}")
     print(f"Permission mode: {config.permissions.mode}")
+    ensure_memory_file(workspace_root)
 
     if args.prompt is not None:
         client = LLMClient(config.model)
         try:
             response = client.chat_completion(
-                [{"role": "user", "content": args.prompt}],
+                [
+                    {
+                        "role": "system",
+                        "content": (
+                            "You are Cody Banks, a local-first coding agent. "
+                            "Use project memory as durable background context, not as an active task plan.\n\n"
+                            "Project memory:\n"
+                            + read_memory_for_prompt(workspace_root)
+                        ),
+                    },
+                    {"role": "user", "content": args.prompt},
+                ],
             )
         except LLMError as exc:
             print(f"Model error: {exc}")

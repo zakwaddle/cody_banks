@@ -533,6 +533,35 @@ Possible tools:
 
 Keep exact replacement as the default because it is easier to inspect and safer.
 
+
+Codex Result:
+```
+Completed Phase 11.
+Added better editing primitives in cody_banks/tools/files.py:
+- apply_patch_text(patch_text) for unified diff patches
+- create_file(path, content)
+- rename_file(old_path, new_path)
+- delete_file(path)
+
+Patch application validates every touched path against the workspace root before running git apply. create_file refuses to overwrite existing files, rename_file refuses to overwrite destinations, and delete_file only deletes files, not directories.
+
+Updated cody_banks/agent.py with model tools:
+- apply_patch(patch_text)
+- create_file(path, content)
+- rename_file(old_path, new_path)
+- delete_file(path)
+
+The agent shows diffs for create/delete/patch operations, preserves edit_file as the preferred exact-replacement path, tracks changed files, logs tool results, respects read-only mode, warns on dirty files, and requires strong y/n-only permission for delete_file.
+
+Updated README.md and cody_banks/prompts/system.md with the new editing behavior.
+Verified with:
+python -m compileall cody_banks
+file primitive checks for create/rename/apply_patch/delete
+tool validation checks
+agent dispatcher checks for create/apply_patch/rename/delete
+strong permission checks for delete_file and read-only mode
+```
+
 ## Phase 12 — Tests and validation
 
 The agent should learn to validate changes, but it should not run expensive commands blindly.
@@ -554,6 +583,32 @@ Useful commands to detect:
 - `ruff check`
 - `mypy`
 
+
+Codex Result:
+```
+Completed Phase 12.
+Updated cody_banks/agent.py so validation commands are detected for:
+- pytest
+- npm test
+- npm run build
+- uv run pytest
+- python -m pytest
+- ruff check
+- mypy
+
+The agent now asks before the first run of each validation command in a session, remembers approved validation commands for that session, and still records permission decisions in the session log.
+
+Shell tool results sent back to the model and stored in session events now use compact stdout/stderr. Failed shell commands include a failure_summary and next_fix guidance, and final validation status includes the relevant failure summary.
+
+Updated README.md and cody_banks/prompts/system.md with validation behavior.
+Verified with:
+python -m compileall cody_banks
+validation command detection checks
+first-run approval and session memory checks
+validation denial checks
+compact output and failure summary checks
+```
+
 ## Phase 13 — Slash commands
 
 Add a few terminal slash commands:
@@ -569,6 +624,28 @@ Add a few terminal slash commands:
 ```
 
 Do not overbuild the interface. The loop matters more than the shell UI.
+
+
+Codex Result:
+```
+Completed Phase 13.
+Added slash command handling to cody_banks/agent.py:
+- /help shows available commands
+- /status shows workspace, model config, git state, and permission mode
+- /model shows or updates model config for the current session
+- /permissions shows or updates permission mode for the current session
+- /compact writes a compact summary of current chat history to .cody/memory.md
+- /clear clears chat context while keeping the session log
+- /exit and /quit exit the loop
+
+The command handling stays inside the existing terminal loop and does not add a larger UI layer. Slash command events are recorded in the session log.
+
+Updated README.md with the slash command list.
+Verified with:
+python -m compileall cody_banks
+direct slash command checks for help/status/model/permissions/compact/clear/exit
+CLI smoke check with /help, /status, /model, /permissions, /clear, /exit
+```
 
 ## Phase 14 — Optional TUI
 
@@ -589,6 +666,25 @@ Good libraries to consider later:
 - prompt_toolkit
 
 This is not required for the first useful version.
+
+
+Codex Result:
+```
+Completed Phase 14 as a documented deferral.
+The roadmap says the TUI is optional and not required for the first useful version, so no terminal UI dependency or alternate interface was added.
+
+Added cody_banks/tui.md documenting:
+- the decision to keep the existing CLI as the primary interface
+- candidate TUI features such as scrolling transcript, tool output panels, diff viewer, permission dialog, and status bar
+- candidate libraries: Textual, Rich, and prompt_toolkit
+- integration notes for reusing the existing Agent loop, permissions, session logging, tool logging, and git awareness
+- done criteria before building a TUI
+
+Updated README.md to mention the Phase 14 decision.
+Verified with:
+python -m compileall cody_banks
+README and TUI plan content checks
+```
 
 ## Milestone 1 — Minimum viable Cody
 

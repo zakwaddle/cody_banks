@@ -1,11 +1,11 @@
 {
-  "built_at": "2026-06-28T23:17:12.414364+00:00",
-  "document_count": 24,
+  "built_at": "2026-06-29T00:52:15.679695+00:00",
+  "document_count": 27,
   "documents": [
     {
-      "byte_count": 3086,
+      "byte_count": 4113,
       "kind": "readme",
-      "line_count": 90,
+      "line_count": 114,
       "path": "README.md",
       "summary": "# Cody Banks\n## Current milestone\n[model]\n[permissions]"
     },
@@ -17,11 +17,11 @@
       "summary": "\"\"\"Cody Banks local coding agent.\"\"\"\n__all__ = [\"__version__\"]\n__version__ = \"0.1.0\""
     },
     {
-      "byte_count": 30658,
+      "byte_count": 48103,
       "kind": "source",
-      "line_count": 743,
+      "line_count": 1143,
       "path": "cody_banks/agent.py",
-      "summary": "import difflib\nimport json\nimport re\nclass ToolRequest:\nclass PermissionResult:\nclass Agent:\ndef __post_init__(self) -> None:\ndef run_chat(self) -> None:\ndef run_turn(self, user_text: str) -> str:\ndef _build_messages(self) -> list[Message]:\ndef _system_message(self) -> str:\ndef _run_tool_request(self, request: ToolRequest) -> ShellResult | dict[str, object] | str:\ndef _confirm_file_write(self, action_key: str, tool_name: str, path: str, details: str) -> PermissionResult:\ndef _ask_permission(\ndef _show_write_file_diff(self, path: str, content: str) -> None:\ndef _show_edit_file_diff(self, path: str, old: str, new: str) -> None:\ndef _show_diff(self, diff: str) -> None:\ndef _warn_if_user_dirty_file(self, path: str) -> None:\ndef _file_dirty_at_turn_start(self, path: str) -> bool:\ndef _show_git_snapshot(self, title: str, state: GitState) -> None:\ndef _show_final_status(self) -> None:\ndef _log_tool_result(\ndef _record_permission_decision(\ndef _record_session_event(self, event_type: str, payload: dict[str, object]) -> None:"
+      "summary": "import difflib\nimport json\nimport re\nclass ToolRequest:\nclass PermissionResult:\nclass Agent:\ndef __post_init__(self) -> None:\ndef run_chat(self) -> None:\ndef _handle_slash_command(self, command: str) -> bool:\ndef _show_help(self) -> None:\ndef _show_status(self) -> None:\ndef _handle_model_command(self, args: str) -> None:\ndef _handle_permissions_command(self, args: str) -> None:\ndef _compact_session_to_memory(self) -> None:\ndef run_turn(self, user_text: str) -> str:\ndef _build_messages(self) -> list[Message]:\ndef _system_message(self) -> str:\ndef _run_tool_request(self, request: ToolRequest) -> ShellResult | dict[str, object] | str:\ndef _confirm_file_write(\ndef _ask_permission(\ndef _confirm_test_command(self, cmd: str) -> PermissionResult:\ndef _show_write_file_diff(self, path: str, content: str) -> None:\ndef _show_create_file_diff(self, path: str, content: str) -> None:\ndef _show_edit_file_diff(self, path: str, old: str, new: str) -> None:"
     },
     {
       "byte_count": 1871,
@@ -52,9 +52,9 @@
       "summary": "import shlex\nclass PermissionMode(StrEnum):\nclass PermissionDecision:\ndef evaluate_shell_command(cmd: str, mode: str, workspace_root: Path | None = None) -> PermissionDecision:\ndef _manual_block_reason(lowered: str) -> str | None:\ndef _prompt_reason(parts: list[str], workspace_root: Path | None) -> str | None:\ndef _package_install_reason(parts: list[str]) -> str | None:\ndef _looks_like_long_test(parts: list[str]) -> bool:\ndef _outside_workspace_path(tokens: list[str], workspace_root: Path | None) -> str | None:\ndef _destructive_outside_workspace_reason(parts: list[str], workspace_root: Path | None) -> str | None:\ndef _looks_like_assignment(token: str) -> bool:\ndef _looks_like_shell_write(token: str) -> bool:\ndef _auto_can_allow(parts: list[str], reason: str) -> bool:"
     },
     {
-      "byte_count": 1908,
+      "byte_count": 2200,
       "kind": "markdown",
-      "line_count": 31,
+      "line_count": 33,
       "path": "cody_banks/prompts/system.md",
       "summary": "# Cody Banks System Prompt\n## Operating rules\n## Tool use\n## Skills"
     },
@@ -108,11 +108,11 @@
       "summary": "\"\"\"Tool implementations for Cody Banks.\"\"\""
     },
     {
-      "byte_count": 3373,
+      "byte_count": 7279,
       "kind": "source",
-      "line_count": 99,
+      "line_count": 216,
       "path": "cody_banks/tools/files.py",
-      "summary": "class ToolError(RuntimeError):\ndef resolve_workspace_path(workspace_root: Path, path: str) -> Path:\ndef display_path(workspace_root: Path, path: Path) -> str:\ndef read_file(path: str, workspace_root: Path) -> dict[str, object]:\ndef write_file(path: str, content: str, workspace_root: Path) -> dict[str, object]:\ndef edit_file(path: str, old: str, new: str, workspace_root: Path) -> dict[str, object]:\ndef list_files(path: str, workspace_root: Path, limit: int = 200) -> dict[str, object]:"
+      "summary": "import subprocess\nclass ToolError(RuntimeError):\ndef resolve_workspace_path(workspace_root: Path, path: str) -> Path:\ndef display_path(workspace_root: Path, path: Path) -> str:\ndef read_file(path: str, workspace_root: Path) -> dict[str, object]:\ndef write_file(path: str, content: str, workspace_root: Path) -> dict[str, object]:\ndef create_file(path: str, content: str, workspace_root: Path) -> dict[str, object]:\ndef edit_file(path: str, old: str, new: str, workspace_root: Path) -> dict[str, object]:\ndef rename_file(old_path: str, new_path: str, workspace_root: Path) -> dict[str, object]:\ndef delete_file(path: str, workspace_root: Path) -> dict[str, object]:\ndef apply_patch_text(patch_text: str, workspace_root: Path) -> dict[str, object]:\ndef touched_paths_from_patch(patch_text: str, workspace_root: Path) -> list[Path]:\ndef list_files(path: str, workspace_root: Path, limit: int = 200) -> dict[str, object]:\ndef _strip_diff_prefix(path: str) -> str | None:"
     },
     {
       "byte_count": 2631,
@@ -143,6 +143,13 @@
       "summary": "import shlex\nimport subprocess\nimport time\nclass ShellResult:\ndef run_shell(cmd: str, workspace_root: Path, timeout_seconds: float = 120.0) -> ShellResult:\ndef cd_target_outside_workspace(cmd: str, workspace_root: Path) -> str | None:"
     },
     {
+      "byte_count": 1407,
+      "kind": "markdown",
+      "line_count": 37,
+      "path": "cody_banks/tui.md",
+      "summary": "# Optional TUI Plan\n## Decision\n## Candidate Features\n## Candidate Libraries\n## Integration Notes\n## Done Criteria Before Building"
+    },
+    {
       "byte_count": 272,
       "kind": "source",
       "line_count": 11,
@@ -157,9 +164,9 @@
       "summary": "[build-system]\n[project]\n[project.scripts]\n[tool.setuptools.packages.find]\n[tool.setuptools.package-data]"
     },
     {
-      "byte_count": 21729,
+      "byte_count": 25592,
       "kind": "roadmap",
-      "line_count": 662,
+      "line_count": 758,
       "path": "roadmap.md",
       "summary": "# Cody Banks Roadmap\n## Working assumptions\n## Phase 1 \u2014 Project skeleton\n## Phase 2 \u2014 Local model connection\n[model]\n## Phase 3 \u2014 The basic agent loop\n## Phase 4 \u2014 Workspace tools\n## Phase 5 \u2014 Permission system\n## Phase 6 \u2014 Diffs before writes\n## Phase 7 \u2014 Sessions and memory\n## Phase 8 \u2014 Runtime prompt and skills\n## Phase 9 \u2014 Git awareness\n## Phase 10 \u2014 Search and retrieval\n## Phase 11 \u2014 Better editing\n## Phase 12 \u2014 Tests and validation\n## Phase 13 \u2014 Slash commands\n## Phase 14 \u2014 Optional TUI\n## Milestone 1 \u2014 Minimum viable Cody\n## Milestone 2 \u2014 Useful local coding agent\n## Milestone 3 \u2014 Cody with RAG and skills\n## Suggested first Codex prompt\n## Design principle"
     },
@@ -169,6 +176,20 @@
       "line_count": 45,
       "path": "system_runtime.md",
       "summary": "# System Runtime\n## Self\n## Morality\n## Authority\n## Responsibility\n## Base\n## Heading\n## Meaning\n## Art\n### Compression"
+    },
+    {
+      "byte_count": 531,
+      "kind": "session_summary",
+      "line_count": 6,
+      "path": "data/sessions/20260628-205008.jsonl",
+      "summary": "events: slash_command=6"
+    },
+    {
+      "byte_count": 630,
+      "kind": "session_summary",
+      "line_count": 7,
+      "path": "data/sessions/20260628-205037.jsonl",
+      "summary": "events: slash_command=7"
     }
   ],
   "retrieval": {
